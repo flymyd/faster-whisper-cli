@@ -6,20 +6,6 @@
 - 本项目是对上游 [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper) 的 CLI 包装，提供跨平台命令行工具 `fwhisper`，默认以 CPU 推理运行，并集成 VAD 语音活动检测。
 - 核心推理引擎、模型与大部分 API 来自上游项目；特此致谢 SYSTRAN 团队与所有贡献者。
 
-### Small model on CPU
-
-| Implementation | Precision | Beam size | Time | RAM Usage |
-| --- | --- | --- | --- | --- |
-| openai/whisper | fp32 | 5 | 6m58s | 2335MB |
-| whisper.cpp | fp32 | 5 | 2m05s | 1049MB |
-| whisper.cpp (OpenVINO) | fp32 | 5 | 1m45s | 1642MB |
-| faster-whisper | fp32 | 5 | 2m37s | 2257MB |
-| faster-whisper (`batch_size=8`) | fp32 | 5 | 1m06s | 4230MB |
-| faster-whisper | int8 | 5 | 1m42s | 1477MB |
-| faster-whisper (`batch_size=8`) | int8 | 5 | 51s | 3608MB |
-
-*Executed with 8 threads on an Intel Core i7-12700K.*
-
 ### Faster Whisper模型列表
 
 | 模型名称              | 完整名称                                     | 文件大小  |
