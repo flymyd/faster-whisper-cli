@@ -15,7 +15,7 @@ if ($Clean) {
 & $Python -m pip install -e . | Out-Null
 
 # 仅 CPU 目标，收集依赖与 assets
-pyinstaller -y -n fwhisper `
+& $Python -m PyInstaller -y -n fwhisper `
   --collect-all av `
   --collect-all tokenizers `
   --collect-all huggingface_hub `

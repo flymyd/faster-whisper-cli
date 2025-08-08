@@ -24,59 +24,12 @@
 | **large-v3-turbo**    | mobiuslabsgmbh/faster-whisper-large-v3-turbo | 1.51 GB   |
 | **turbo**             | mobiuslabsgmbh/faster-whisper-large-v3-turbo | 1.51 GB   |
 
-## Usage
-
-### Word-level timestamps
-
-```python
-segments, _ = model.transcribe("audio.mp3", word_timestamps=True)
-
-for segment in segments:
-    for word in segment.words:
-        print("[%.2fs -> %.2fs] %s" % (word.start, word.end, word.word))
-```
-
-### VAD filter
-
-The library integrates the [Silero VAD](https://github.com/snakers4/silero-vad) model to filter out parts of the audio without speech:
-
-```python
-segments, _ = model.transcribe("audio.mp3", vad_filter=True)
-```
-
-The default behavior is conservative and only removes silence longer than 2 seconds. See the available VAD parameters and default values in the [source code](https://github.com/SYSTRAN/faster-whisper/blob/master/faster_whisper/vad.py). They can be customized with the dictionary argument `vad_parameters`:
-
-```python
-segments, _ = model.transcribe(
-    "audio.mp3",
-    vad_filter=True,
-    vad_parameters=dict(min_silence_duration_ms=500),
-)
-```
-Vad filter is enabled by default for batched transcription.
-
-### Logging
-
-The library logging level can be configured like this:
-
-```python
-import logging
-
-logging.basicConfig()
-logging.getLogger("faster_whisper").setLevel(logging.DEBUG)
-```
-
 我们提供了跨平台 CLI 工具 `fwhisper`，默认以 CPU 推理运行，且默认开启 VAD（语音活动检测），可将音频转写为 txt/srt/vtt/jsonl。
 
-### 安装（开发/体验）
+### 使用示例
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\\Scripts\\activate
-pip install -e .
-
-# 冒烟测试（CPU+INT8）
-fwhisper tests/data/jfk.flac --model tiny --device cpu --compute-type int8 --output out.srt --format srt
+fwhisper ./jfk.flac --model tiny --device cpu --compute-type int8 --output ./out.srt --format srt
 ```
 
 ### 常用示例
@@ -239,11 +192,10 @@ ARCH=x86_64 ./scripts/build_macos.sh
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.\.venv\\Scripts\Activate.ps1
 pip install -U pip setuptools wheel pyinstaller
 pip install -e .
-.\u005cscripts\build_windows.ps1 -Python python
-
+.\scripts\build_windows.ps1 -Python python
 # 产物目录：
 # - dist/fwhisper-windows-x64
 ```

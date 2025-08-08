@@ -2,6 +2,8 @@ import argparse
 import json
 import os
 import sys
+import time
+from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 from faster_whisper import (
@@ -156,6 +158,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--chunk-length", type=int, help="音频分块长度（秒）")
     # 其他
     parser.add_argument("--log-progress", action="store_true")
+    parser.add_argument(
+        "--no-progress-events",
+        action="store_true",
+        help="关闭进度事件输出（默认输出 JSON 行到标准错误）",
+    )
     return parser
 
 
@@ -213,26 +220,113 @@ def main(argv: Optional[list] = None) -> int:
     )
 
     if pipeline is not None:
-        segments, _info = pipeline.transcribe(
+        segments, info = pipeline.transcribe(
             args.input,
             batch_size=args.batch_size,
             **common_kwargs,
         )
     else:
-        segments, _info = model.transcribe(
+        segments, info = model.transcribe(
             args.input,
             **common_kwargs,
         )
 
-    writer = {
-        "txt": _write_txt,
-        "srt": _write_srt,
-        "vtt": _write_vtt,
-        "jsonl": _write_jsonl,
-    }[output_format]
+    # 进度事件：开始
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).astimezone().isoformat()
+
+    start_ts = time.time()
+    if not args.no_progress_events:
+        print(
+            json.dumps(
+                {
+                    "event": "start",
+                    "time": _now_iso(),
+                    "input": args.input,
+                    "model": args.model,
+                    "device": args.device,
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+
+    total_seconds = getattr(info, "duration", None) or 0.0
+    # 若存在有效原始总时长，使用它进行进度估计
+    if total_seconds and total_seconds > 0 and isinstance(total_seconds, (int, float)):
+        pass
+    else:
+        total_seconds = None
 
     with _open_output(args.output) as fp:
-        writer(segments, fp)
+        # 写入头部（VTT）
+        if output_format == "vtt":
+            fp.write("WEBVTT\n\n")
+
+        srt_index = 1
+        last_progress_time = 0.0
+
+        for seg in segments:
+            # 写出分段
+            if output_format == "txt":
+                if seg.text:
+                    fp.write(seg.text.strip() + "\n")
+            elif output_format == "jsonl":
+                if seg.text:
+                    fp.write(json.dumps(_segment_to_dict(seg), ensure_ascii=False) + "\n")
+            elif output_format == "srt":
+                if seg.text:
+                    fp.write(
+                        f"{srt_index}\n{_to_srt_timestamp(seg.start)} --> {_to_srt_timestamp(seg.end)}\n{seg.text.strip()}\n\n"
+                    )
+                    srt_index += 1
+            elif output_format == "vtt":
+                if seg.text:
+                    fp.write(
+                        f"{_to_vtt_timestamp(seg.start)} --> {_to_vtt_timestamp(seg.end)}\n{seg.text.strip()}\n\n"
+                    )
+
+            # 进度事件：按段更新
+            if not args.no_progress_events:
+                processed_seconds = seg.end if isinstance(seg.end, (int, float)) else last_progress_time
+                if total_seconds:
+                    # 防回退
+                    processed_seconds = max(last_progress_time, min(processed_seconds, total_seconds))
+                else:
+                    processed_seconds = max(last_progress_time, processed_seconds)
+                last_progress_time = processed_seconds
+                elapsed = time.time() - start_ts
+                payload = {
+                    "event": "progress",
+                    "time": _now_iso(),
+                    "elapsed_seconds": round(elapsed, 3),
+                    "processed_seconds": round(processed_seconds, 3),
+                }
+                if total_seconds:
+                    payload.update(
+                        {
+                            "total_seconds": round(total_seconds, 3),
+                            "progress": round(min(processed_seconds / total_seconds, 1.0), 4),
+                        }
+                    )
+                print(json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
+
+    # 进度事件：结束
+    if not args.no_progress_events:
+        end_ts = time.time()
+        print(
+            json.dumps(
+                {
+                    "event": "end",
+                    "time": _now_iso(),
+                    "elapsed_seconds": round(end_ts - start_ts, 3),
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
 
     return 0
 

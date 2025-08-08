@@ -12,13 +12,27 @@ if [[ -z "${ARCH}" ]]; then
   exit 2
 fi
 
-PYTHON_BIN=${PYTHON_BIN:-python3}
+# 选择正确的 Python 解释器（优先使用 Conda/venv），避免误用 Homebrew 系统 Python
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+    PYTHON_BIN="${CONDA_PREFIX}/bin/python"
+  elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+    PYTHON_BIN="${VIRTUAL_ENV}/bin/python"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python)"
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+  else
+    echo "未找到可用的 Python 解释器，请安装 Python 或通过 PYTHON_BIN 指定路径" >&2
+    exit 2
+  fi
+fi
 
-${PYTHON_BIN} -m pip install -U pip setuptools wheel pyinstaller || true
-${PYTHON_BIN} -m pip install -e .
+"${PYTHON_BIN}" -m pip install -U pip setuptools wheel pyinstaller
+"${PYTHON_BIN}" -m pip install -e .
 
 # 仅 CPU 目标，收集依赖与 assets
-pyinstaller -y -n fwhisper \
+"${PYTHON_BIN}" -m PyInstaller -y -n fwhisper \
   --collect-all av \
   --collect-all tokenizers \
   --collect-all huggingface_hub \
