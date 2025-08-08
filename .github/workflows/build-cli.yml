@@ -9,8 +9,30 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [macos-13, macos-14, windows-latest]
-        mode: [onefile]
+        include:
+          # macOS 10.15+ x64（在 Intel 机器上构建，最低目标 10.15，可运行于 11+）
+          - os: macos-13
+            arch: x86_64
+            min_target: "10.15"
+            label: macos-10.15-x64
+            mode: onefile
+          # macOS 11+ x64（在 Intel 机器上构建）
+          - os: macos-13
+            arch: x86_64
+            min_target: "11.0"
+            label: macos-11plus-x64
+            mode: onefile
+          # macOS 11+ arm64（在 Apple Silicon 机器上构建）
+          - os: macos-14
+            arch: arm64
+            min_target: "11.0"
+            label: macos-11plus-arm64
+            mode: onefile
+          # Windows x64
+          - os: windows-latest
+            arch: x64
+            label: windows-x64
+            mode: onefile
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -26,20 +48,12 @@ jobs:
         shell: bash
         run: |
           chmod +x scripts/build_macos.sh
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-            if [[ "${{ runner.os }}" == "macOS" && "${{ matrix.os }}" == "macos-14" ]]; then
-              if [[ "${{ matrix.mode }}" == "onefile" ]]; then
-                ARCH=arm64 ONEFILE=1 ./scripts/build_macos.sh
-              else
-                ARCH=arm64 ./scripts/build_macos.sh
-              fi
-            else
-              if [[ "${{ matrix.mode }}" == "onefile" ]]; then
-                ARCH=x86_64 ONEFILE=1 ./scripts/build_macos.sh
-              else
-                ARCH=x86_64 ./scripts/build_macos.sh
-              fi
-            fi
+          # 设置最低系统版本（仅对 macOS 有意义）
+          export MACOSX_DEPLOYMENT_TARGET="${{ matrix.min_target }}"
+          if [[ "${{ matrix.mode }}" == "onefile" ]]; then
+            ARCH=${{ matrix.arch }} ONEFILE=1 ./scripts/build_macos.sh
+          else
+            ARCH=${{ matrix.arch }} ./scripts/build_macos.sh
           fi
       - name: Build (Windows)
         if: runner.os == 'Windows'
@@ -53,7 +67,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fwhisper-${{ runner.os }}-${{ matrix.mode }}
+          name: fwhisper-${{ matrix.label }}-${{ matrix.mode }}
           path: |
             dist/**
 
