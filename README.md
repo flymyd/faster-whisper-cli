@@ -179,9 +179,9 @@ pip install -U pip setuptools wheel pyinstaller
 pip install -e .
 
 # Apple Silicon 架构
-ARCH=arm64 ./scripts/build_macos.sh
+ARCH=arm64 ONEFILE=1 ./scripts/build_macos.sh
 # Intel 架构
-ARCH=x86_64 ./scripts/build_macos.sh
+ARCH=x86_64 ONEFILE=1 ./scripts/build_macos.sh
 
 # 产物目录：
 # - dist/fwhisper-macos-arm64
@@ -195,7 +195,8 @@ python -m venv .venv
 .\.venv\\Scripts\Activate.ps1
 pip install -U pip setuptools wheel pyinstaller
 pip install -e .
-.\scripts\build_windows.ps1 -Python python
+# .\scripts\build_windows.ps1 -Python python
+powershell -File scripts/build_windows.ps1 -Arch x64 -OneFile
 # 产物目录：
 # - dist/fwhisper-windows-x64
 ```
