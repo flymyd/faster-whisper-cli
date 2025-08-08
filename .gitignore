@@ -1,0 +1,23 @@
+# Byte-compiled / Optimized / DLL Files
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+
+# Distribution / Packaging
+venv/
+
+# Unit Test
+.pytest_cache/
+
+# Ignore IDE, Editor Files
+.idea/
+.vscode/
+
+
+build/
+dist/
+*.egg-info/
+
+# 关闭自动流水线构建
+.github/
