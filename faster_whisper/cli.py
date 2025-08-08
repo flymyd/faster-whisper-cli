@@ -6,6 +6,60 @@ import time
 from datetime import datetime, timezone
 from typing import Iterable, Optional
 
+def _detect_run_base_dir() -> str:
+    """检测用于解析相对路径的基准目录，最大化健壮性。
+
+    优先顺序：
+    1) 当前工作目录（若可用）
+    2) 冻结可执行文件所在目录（PyInstaller onefile）
+    3) 源码文件所在目录
+    4) 用户主目录
+    5) 根目录 "/"
+    """
+    candidates = []
+    # 1) CWD
+    try:
+        cwd = os.getcwd()
+        if cwd:
+            candidates.append(cwd)
+    except Exception:
+        pass
+    # 2) Frozen exe dir
+    try:
+        if getattr(sys, "frozen", False):
+            exe_dir = os.path.dirname(sys.executable)
+            if exe_dir:
+                candidates.append(exe_dir)
+    except Exception:
+        pass
+    # 3) Script dir
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        if script_dir:
+            candidates.append(script_dir)
+    except Exception:
+        pass
+    # 4) Home dir
+    try:
+        home_dir = os.path.expanduser("~")
+        if home_dir:
+            candidates.append(home_dir)
+    except Exception:
+        pass
+    # 5) Fallback root
+    candidates.append("/")
+
+    for candidate in candidates:
+        try:
+            if candidate and os.path.isabs(candidate) and os.path.isdir(candidate):
+                return candidate
+        except Exception:
+            continue
+    return "/"
+
+
+RUN_BASE_DIR = _detect_run_base_dir()
+
 from faster_whisper import (
     BatchedInferencePipeline,
     WhisperModel,
@@ -187,11 +241,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_path(path: str) -> str:
+    """解析用户路径：支持 ~ 与环境变量；统一以 INITIAL_CWD 为基准解析相对路径。
+
+    不要求目标存在，仅做规范化。
+    """
+    # 展开 ~ 与环境变量
+    expanded = os.path.expanduser(os.path.expandvars(path))
+    if os.path.isabs(expanded):
+        return os.path.normpath(expanded)
+    # 始终基于 RUN_BASE_DIR 构造绝对路径，避免依赖不可靠的 CWD
+    return os.path.normpath(os.path.join(RUN_BASE_DIR, expanded))
+
+
 def _open_output(path: Optional[str]):
     if not path or path == "-":
         return sys.stdout
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    return open(path, "w", encoding="utf-8")
+    abs_path = _resolve_path(path)
+    os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
+    return open(abs_path, "w", encoding="utf-8")
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -207,6 +275,21 @@ def main(argv: Optional[list] = None) -> int:
     threshold = level_order.get(getattr(args, "log_level", "info"), 20)
     emit_logs = bool(getattr(args, "logs", True))
     emit_events = emit_logs and not getattr(args, "no_progress_events", False)
+
+    # 非 debug 模式下抑制数值运行期告警（例如 numpy 的 RuntimeWarning），避免干扰输出
+    if threshold > level_order["debug"]:
+        try:
+            import warnings as _warnings
+
+            _warnings.filterwarnings("ignore", category=RuntimeWarning)
+        except Exception:
+            pass
+        try:
+            import numpy as _np
+
+            _np.seterr(all="ignore")
+        except Exception:
+            pass
 
     def _emit_log(level: str, message: str, data: Optional[dict] = None):
         if not emit_logs:
@@ -316,15 +399,18 @@ def main(argv: Optional[list] = None) -> int:
     )
 
     _emit_log("info", "开始转写", {"batched": bool(pipeline), "batch_size": args.batch_size or 1})
+    # 解析输入音频路径，支持 ~ 与环境变量，并规避 CWD 失效
+    input_path = _resolve_path(args.input)
+
     if pipeline is not None:
         segments, info = pipeline.transcribe(
-            args.input,
+            input_path,
             batch_size=args.batch_size,
             **common_kwargs,
         )
     else:
         segments, info = model.transcribe(
-            args.input,
+            input_path,
             **common_kwargs,
         )
     _emit_log(
