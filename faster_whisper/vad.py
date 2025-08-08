@@ -307,15 +307,18 @@ class SileroVADModel:
         opts.intra_op_num_threads = 1
         opts.enable_cpu_mem_arena = False
         opts.log_severity_level = 4
-
+        providers = [
+            "CoreMLExecutionProvider",
+            "CPUExecutionProvider",
+        ]
         self.encoder_session = onnxruntime.InferenceSession(
             encoder_path,
-            providers=["CPUExecutionProvider"],
+            providers=providers,
             sess_options=opts,
         )
         self.decoder_session = onnxruntime.InferenceSession(
             decoder_path,
-            providers=["CPUExecutionProvider"],
+            providers=providers,
             sess_options=opts,
         )
 

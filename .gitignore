@@ -18,6 +18,7 @@ venv/
 build/
 dist/
 *.egg-info/
+*.srt
 
 # 关闭自动流水线构建
 .github/

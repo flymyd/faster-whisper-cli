@@ -163,6 +163,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="关闭进度事件输出（默认输出 JSON 行到标准错误）",
     )
+    # 日志控制
+    parser.add_argument(
+        "--log-level",
+        choices=["debug", "info", "warning", "error"],
+        default="info",
+        help="日志级别（debug 最详细）",
+    )
+    logs_group = parser.add_mutually_exclusive_group()
+    logs_group.add_argument(
+        "--logs",
+        dest="logs",
+        action="store_true",
+        default=True,
+        help="启用日志输出（默认启用）",
+    )
+    logs_group.add_argument(
+        "--no-logs",
+        dest="logs",
+        action="store_false",
+        help="关闭所有日志输出（包括开始/进度/结束事件）",
+    )
     return parser
 
 
@@ -178,7 +199,76 @@ def main(argv: Optional[list] = None) -> int:
 
     output_format = args.format or _infer_format_from_path(args.output)
 
+    # 进度事件：尽早输出开始，避免用户在模型加载/预处理期间无反馈
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).astimezone().isoformat()
+
+    level_order = {"debug": 10, "info": 20, "warning": 30, "error": 40}
+    threshold = level_order.get(getattr(args, "log_level", "info"), 20)
+    emit_logs = bool(getattr(args, "logs", True))
+    emit_events = emit_logs and not getattr(args, "no_progress_events", False)
+
+    def _emit_log(level: str, message: str, data: Optional[dict] = None):
+        if not emit_logs:
+            return
+        if level_order.get(level, 999) < threshold:
+            return
+        payload = {"event": "log", "level": level, "time": _now_iso(), "message": message}
+        if data:
+            payload["data"] = data
+        print(json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
+
+    def _emit_event(payload: dict):
+        if not emit_events:
+            return
+        print(json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
+
+    start_ts = time.time()
+    _emit_event(
+        {
+            "event": "start",
+            "time": _now_iso(),
+            "input": args.input,
+            "model": args.model,
+            "device": args.device,
+        }
+    )
+    _emit_log(
+        "info",
+        "运行参数",
+        {
+            "input": args.input,
+            "output": args.output,
+            "output_format": output_format,
+            "model": args.model,
+            "device": args.device,
+            "compute_type": args.compute_type,
+            "cpu_threads": args.cpu_threads,
+            "num_workers": args.num_workers,
+            "batch_size": args.batch_size,
+            "chunk_length": args.chunk_length,
+            "vad_filter": args.vad_filter,
+            "vad_params": bool(args.vad_params),
+            "word_timestamps": args.word_timestamps,
+            "without_timestamps": args.without_timestamps,
+            "multilingual": args.multilingual,
+            "beam_size": args.beam_size,
+            "best_of": args.best_of,
+            "temperature": args.temperature,
+        },
+    )
+
     # 仅 CPU 为默认；允许用户显式选择 auto/cuda，但当前构建主要面向 CPU。
+    t0 = time.time()
+    _emit_log(
+        "info",
+        "初始化模型",
+        {
+            "model": args.model,
+            "device": args.device,
+            "compute_type": args.compute_type,
+        },
+    )
     model = WhisperModel(
         args.model,
         device=args.device,
@@ -186,9 +276,15 @@ def main(argv: Optional[list] = None) -> int:
         cpu_threads=args.cpu_threads,
         num_workers=args.num_workers,
     )
+    _emit_log("debug", "模型初始化完成", {"took_seconds": round(time.time() - t0, 3)})
 
     use_batched = args.batch_size and args.batch_size > 1
-    pipeline = BatchedInferencePipeline(model) if use_batched else None
+    pipeline = None
+    if use_batched:
+        t1 = time.time()
+        _emit_log("info", "构建批量推理管线", {"batch_size": args.batch_size})
+        pipeline = BatchedInferencePipeline(model)
+        _emit_log("debug", "批量管线构建完成", {"took_seconds": round(time.time() - t1, 3)})
 
     vad_params = None
     if args.vad_params:
@@ -219,6 +315,7 @@ def main(argv: Optional[list] = None) -> int:
         hotwords=args.hotwords,
     )
 
+    _emit_log("info", "开始转写", {"batched": bool(pipeline), "batch_size": args.batch_size or 1})
     if pipeline is not None:
         segments, info = pipeline.transcribe(
             args.input,
@@ -230,27 +327,17 @@ def main(argv: Optional[list] = None) -> int:
             args.input,
             **common_kwargs,
         )
+    _emit_log(
+        "debug",
+        "转写调用返回（开始流式读取分段）",
+        {
+            "language": getattr(info, "language", None),
+            "language_probability": getattr(info, "language_probability", None),
+            "duration": getattr(info, "duration", None),
+        },
+    )
 
-    # 进度事件：开始
-    def _now_iso() -> str:
-        return datetime.now(timezone.utc).astimezone().isoformat()
-
-    start_ts = time.time()
-    if not args.no_progress_events:
-        print(
-            json.dumps(
-                {
-                    "event": "start",
-                    "time": _now_iso(),
-                    "input": args.input,
-                    "model": args.model,
-                    "device": args.device,
-                },
-                ensure_ascii=False,
-            ),
-            file=sys.stderr,
-            flush=True,
-        )
+    # 已在转写前输出 start 事件
 
     total_seconds = getattr(info, "duration", None) or 0.0
     # 若存在有效原始总时长，使用它进行进度估计
@@ -266,8 +353,20 @@ def main(argv: Optional[list] = None) -> int:
 
         srt_index = 1
         last_progress_time = 0.0
+        seg_count = 0
 
         for seg in segments:
+            seg_count += 1
+            _emit_log(
+                "debug",
+                "分段就绪",
+                {
+                    "id": getattr(seg, "id", seg_count),
+                    "start": getattr(seg, "start", None),
+                    "end": getattr(seg, "end", None),
+                    "has_text": bool(getattr(seg, "text", "")),
+                },
+            )
             # 写出分段
             if output_format == "txt":
                 if seg.text:
@@ -313,20 +412,19 @@ def main(argv: Optional[list] = None) -> int:
                 print(json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
 
     # 进度事件：结束
-    if not args.no_progress_events:
-        end_ts = time.time()
-        print(
-            json.dumps(
-                {
-                    "event": "end",
-                    "time": _now_iso(),
-                    "elapsed_seconds": round(end_ts - start_ts, 3),
-                },
-                ensure_ascii=False,
-            ),
-            file=sys.stderr,
-            flush=True,
-        )
+    end_ts = time.time()
+    _emit_event(
+        {
+            "event": "end",
+            "time": _now_iso(),
+            "elapsed_seconds": round(end_ts - start_ts, 3),
+        }
+    )
+    _emit_log(
+        "info",
+        "转写完成",
+        {"elapsed_seconds": round(end_ts - start_ts, 3), "segments": seg_count},
+    )
 
     return 0
 
