@@ -220,11 +220,16 @@ class FeatureExtractor:
             return_complex=True,
         ).astype("complex64")
         magnitudes = np.abs(stft[..., :-1]) ** 2
+        # 将 NaN/Inf 值替换为有限值，避免后续矩阵乘出现 RuntimeWarning
+        magnitudes = np.nan_to_num(magnitudes, copy=False, neginf=0.0, posinf=1e10)
 
-        mel_spec = self.mel_filters @ magnitudes
+        # 抑制数值警告：matmul/对数的溢出或非法值在下游已被裁剪
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            mel_spec = self.mel_filters @ magnitudes
+            mel_spec = np.nan_to_num(mel_spec, copy=False, neginf=0.0, posinf=1e10)
 
-        log_spec = np.log10(np.clip(mel_spec, a_min=1e-10, a_max=None))
-        log_spec = np.maximum(log_spec, log_spec.max() - 8.0)
-        log_spec = (log_spec + 4.0) / 4.0
+            log_spec = np.log10(np.clip(mel_spec, a_min=1e-10, a_max=None))
+            log_spec = np.maximum(log_spec, log_spec.max() - 8.0)
+            log_spec = (log_spec + 4.0) / 4.0
 
         return log_spec
